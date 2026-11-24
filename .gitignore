@@ -1,0 +1,24 @@
+# Virtual environments
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller build outputs
+build/
+dist/
+*.spec
+
+# Database (remove this line if you want to track the .db)
+*.db
+
+# Old backups / experiments
+_old_attempt_backup/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,164 @@
+"""The main application — pure wiring, no test logic."""
+import tkinter as tk
+from tkinter import ttk
+from datetime import datetime
+
+import matplotlib
+matplotlib.use("TkAgg")
+
+from .config import APP_TITLE, WINDOW_SIZE, C, FONT
+from .data.database import Database
+from .data.log_store import LogStore
+from .ui.styles import install_styles
+
+# ---- real tabs -------------------------------------------------------------
+from .tests.dashboard_tab import DashboardTab
+from .tests.concrete_tab import ConcreteTab
+from .tests.soil_tabs import (AtterbergTab, CompactionTab, PsdTab, CbrTab, FieldDensityTab, StabilizationTab)
+from .tests.soil_report_tab import SoilReportTab
+
+
+class CeltisApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title(APP_TITLE)
+        self.root.geometry(WINDOW_SIZE)
+        self.root.configure(bg="#e8e8e8")
+
+        # --- data layer ---
+        self.db = Database().connect()
+        self.log_store = LogStore(self.db)
+
+        # --- shared state between tabs (Proctor MDD/OMC, etc.) ---
+        self.session = {}
+        # --- registry: log_category -> tab instance (or placeholder frame) ---
+        self.tabs = {}
+
+        install_styles()
+        self._build_header()
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+
+        self._install_tabs()
+        self._build_status_bar()
+        self._bind_nav()
+
+    # ---------- chrome ----------
+    def _build_header(self):
+        h = tk.Frame(self.root, bg=C.PRIMARY, pady=8)
+        h.pack(fill=tk.X)
+        tk.Label(h, text=f"🏗️  {APP_TITLE}",
+                 bg=C.PRIMARY, fg="white",
+                 font=(FONT, 18, "bold")).pack(side=tk.LEFT, padx=12)
+        self.clock = tk.Label(h, bg=C.PRIMARY, fg="#ecf0f1",
+                              font=(FONT, 12))
+        self.clock.pack(side=tk.RIGHT, padx=12)
+        self._tick()
+
+    def _tick(self):
+        self.clock.config(text=datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
+        self.root.after(1000, self._tick)
+
+    def _build_status_bar(self):
+        bf = tk.Frame(self.root, bg="#1a1a2e", height=28)
+        bf.pack(side=tk.BOTTOM, fill=tk.X)
+        bf.pack_propagate(False)
+        self.status = tk.Label(bf, text="Civil Engineering Laboratory System",
+                               bg="#1a1a2e", fg="#a0aec0",
+                               font=(FONT, 11), anchor="w")
+        self.status.pack(side=tk.LEFT, padx=10)
+        tk.Label(bf, text=f"© 2025 {APP_TITLE}",
+                 bg="#1a1a2e", fg="#718096",
+                 font=(FONT, 10)).pack(side=tk.LEFT, expand=True)
+        tk.Label(bf, text="✅ Database Connected", bg="#212137", fg="#4a5568",
+                 font=(FONT, 10)).pack(side=tk.RIGHT, padx=10)
+
+    def _bind_nav(self):
+        nb = self.notebook
+
+        def _nav(delta):
+            nb.select((nb.index(nb.select()) + delta) % nb.index("end"))
+            return "break"
+
+        self.root.bind_all("<Control-Tab>",       lambda e: _nav(1))
+        self.root.bind_all("<Control-Shift-Tab>", lambda e: _nav(-1))
+        self.root.bind_all("<Alt-Right>",         lambda e: _nav(1))
+        self.root.bind_all("<Alt-Left>",          lambda e: _nav(-1))
+        for i in range(1, 10):
+            self.root.bind_all(
+                f"<Control-Key-{i}>",
+                lambda e, n=i: nb.select(n - 1) if n <= nb.index("end") else None)
+
+    # ---------- tabs ----------
+    soil_nb = self._group(" Soil Tests")
+        self._register(AtterbergTab(soil_nb, self), "atterberg")
+        self._register(CompactionTab(soil_nb, self), "compaction")
+        self._register(PsdTab(soil_nb, self), "psd")
+        self._register(CbrTab(soil_nb, self), "cbr")
+        self._register(FieldDensityTab(soil_nb, self), "field_density")
+        self._register(StabilizationTab(soil_nb, self), "stabilization")
+
+        # Asphalt group (all placeholders for now)
+        asph_nb = self._group("🛣️ Asphalt Tests")
+        self._placeholder_group(asph_nb, [
+            ("Bitumen Extraction",     "asphalt_extraction"),
+            ("Marshall Test",          "asphalt_marshall"),
+            ("Max Sp. Gravity (Gmm)",  "asphalt_gmm"),
+            ("Core Density",           "core_density"),
+            ("Spray Rate",             "spray_rate"),
+            ("Specific Gravity",       "specific_gravity"),
+        ])
+
+        # Aggregate group (all placeholders for now)
+        agg_nb = self._group("🪨 Aggregate Tests")
+        self._placeholder_group(agg_nb, [
+            ("💧 Moisture Content",         "agg_moisture"),
+            ("⚖️ Rel. Density & WA",       "agg_rd"),
+            ("🪨 FI + ALD",                 "agg_fi"),
+            ("📏 Elongation Index",         "agg_ei"),
+            ("💥 ACV",                      "agg_acv"),
+            ("🔟 TFV",                      "agg_tfv"),
+            ("⚡ AIV",                      "agg_aiv"),
+            ("🔄 LAA",                      "agg_laa"),
+            ("🏖️ Fine Aggregates",          "fine_aggregate"),
+            ("🪨 Aggregate Report",         "agg_report"),
+            ("📋 Coarse Agg. Properties",  "coarse_properties"),
+        ])
+
+        # Final top-level report tab
+        self._register(SoilReportTab(self.notebook, self), "soil_report")
+
+    # ---------- tab helpers ----------
+    def _register(self, tab, category):
+        """Register a tab instance under its log_category (or a custom key)."""
+        cat = getattr(tab, "log_category", None) or category
+        self.tabs[cat] = tab
+        return tab
+
+    def _group(self, label):
+        """Create a nested notebook for a group of related tabs."""
+        outer = ttk.Frame(self.notebook)
+        self.notebook.add(outer, text=label)
+        nb = ttk.Notebook(outer)
+        nb.pack(fill=tk.BOTH, expand=True)
+        return nb
+
+    def _placeholder_group(self, group_nb, labels):
+        """Drop-in placeholder tabs while the real class is being written.
+
+        Delete this method + its two call sites once every tab has a real
+        BaseTab subclass.
+        """
+        for label, category in labels:
+            f = ttk.Frame(group_nb, padding=20)
+            group_nb.add(f, text=label)
+            ttk.Label(f, text=f"⚙️  '{label}' — to be migrated",
+                      font=(FONT, 14, "bold")).pack(pady=20)
+            ttk.Label(
+                f,
+                text=("Copy the original _build_* method body into a\n"
+                      "BaseTab subclass in celtis/tests/ — see the\n"
+                      "ConcreteTab and AtterbergTab pattern."),
+                font=(FONT, 11), justify="center",
+            ).pack()
+            self.tabs[category] = f

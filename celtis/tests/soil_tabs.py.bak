@@ -1,0 +1,306 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from datetime import datetime
+import numpy as np
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+from ..config import C, FONT
+from ..core import soil as calc
+from ..ui.base_tab import BaseTab
+from ..ui.widgets import (entry, calc_entry, section, scrolled_frame,
+                          set_val, get_float)
+
+
+class AtterbergTab(BaseTab):
+    tab_label = "Atterberg Limits"
+    log_category = "atterberg"
+    log_columns = (("ll", "LL (%)", 60), ("pl", "PL (%)", 60),
+                   ("pi", "PI", 50), ("ls", "LS (%)", 60))
+
+    def build(self):
+        pane = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=5,
+                              sashrelief=tk.RAISED, bg="#aaa")
+        pane.pack(fill=tk.BOTH, expand=True)
+
+        left = tk.Frame(pane, bg="#f0f0f0")
+        pane.add(left, minsize=1000)
+        _, inner, _ = scrolled_frame(left)
+
+        right = tk.Frame(pane, bg="white")
+        pane.add(right, minsize=450)
+        _, rinner, _ = scrolled_frame(right)
+        tk.Label(rinner, text="Cone Penetration vs Moisture Content",
+                 bg="#2c3e50", fg="white", font=(FONT, 12, "bold"),
+                 pady=4).pack(fill=tk.X)
+        self.chart = tk.Frame(rinner, bg="white")
+        self.chart.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+        self._build_info(inner)
+        self._build_table(inner)
+        self._build_summary(inner)
+        self._build_shrinkage(inner)
+        self._build_buttons(inner)
+        self._build_log(inner)
+
+    def _build_info(self, parent):
+        f = section(parent, "Determination of Atterberg Limits of a Soil",
+                    0, 0, colspan=6)
+        fields = [("Date:", "att_date"), ("Operator:", "att_operator"),
+                  ("Sample No.:", "att_sampleno"), ("Technician:", "att_tech"),
+                  ("Location:", "att_location"), ("Checked By:", "att_checked"),
+                  ("Sample Description:", "att_desc"),
+                  ("Approved By:", "att_approved"),
+                  ("Soil Condition:", "att_condition")]
+        self.info = {}
+        for ri, (lt, key) in enumerate(fields):
+            r, c = divmod(ri, 3)
+            tk.Label(f, text=lt, bg="#f0f0f0",
+                     font=(FONT, 12, "bold")).grid(row=r, column=c * 2,
+                                                   sticky="w", padx=2, pady=1)
+            e = entry(f, w=12)
+            e.grid(row=r, column=c * 2 + 1, padx=2, pady=1, sticky="w")
+            self.info[key] = e
+        self.info["att_date"].insert(0, datetime.now().strftime("%d/%m/%Y"))
+
+    def _build_table(self, parent):
+        f = section(parent, "Liquid Limit – Cone Penetrometer Method",
+                    1, 0, colspan=6)
+        tk.Label(f, text="Test No.", font=(FONT, 12, "bold"),
+                 bg="#2c3e50", fg="white").grid(row=0, column=0, sticky="ew",
+                                                padx=0, pady=1, ipady=2)
+        for ti, lab in enumerate(["1", "2", "3", "4", "PL"]):
+            tk.Label(f, text=lab, font=(FONT, 12, "bold"),
+                     bg="#2c3e50", fg="white").grid(
+                row=0, column=1 + ti * 2, columnspan=2, sticky="ew",
+                padx=0, pady=1, ipady=2)
+
+        rows = [("Cone Penetration (mm)", "cone"), ("Tin No.", "tin_no"),
+                ("Wt of wet soil+Tin (g)", "wt_wet"),
+                ("Wt of dry soil+Tin (g)", "wt_dry"),
+                ("Wt of Tin (g)", "wt_tin"),
+                ("Wt of moisture (g)", "wt_moist"),
+                ("Wt of dry soil (g)", "wt_drysoil"),
+                ("Moisture content (%)", "mc"), ("Average", "avg")]
+        calc_rows = {"wt_moist", "wt_drysoil", "mc"}
+        self.cells = {}
+        for ri, (label, key) in enumerate(rows):
+            tk.Label(f, text=label, bg="#f8f8f8", font=(FONT, 12),
+                     anchor="w", relief=tk.RIDGE).grid(
+                row=ri + 1, column=0, sticky="ew", padx=0, pady=1, ipady=1)
+            is_calc = key in calc_rows
+            for ci in range(10):
+                if key == "avg":
+                    e = tk.Entry(f, font=(FONT, 12), justify="center",
+                                 bg=C.CALC, state="readonly",
+                                 relief=tk.RIDGE, width=7)
+                elif is_calc:
+                    e = tk.Entry(f, font=(FONT, 12), justify="center",
+                                 bg=C.CALC, state="readonly",
+                                 relief=tk.RIDGE, width=7)
+                else:
+                    e = tk.Entry(f, font=(FONT, 12), justify="center",
+                                 bg="white", relief=tk.RIDGE, width=7)
+                if key == "cone" and ci == 8:
+                    e.config(state="disabled", bg="#d8d8d8")
+                e.grid(row=ri + 1, column=ci + 1, sticky="ew", padx=0, pady=1)
+                self.cells[(key, ci)] = e
+
+    def _build_summary(self, parent):
+        f = section(parent, "Atterberg Limit Tests Summary", 3, 0, colspan=3)
+        for ri, (lt, key) in enumerate([("Liquid Limit", "sum_ll"),
+                                        ("Plastic Limit", "sum_pl"),
+                                        ("Plasticity Index", "sum_pi"),
+                                        ("Linear Shrinkage", "sum_ls")]):
+            tk.Label(f, text=lt, font=(FONT, 12, "bold"), bg="#f0f0f0",
+                     anchor="w").grid(row=ri, column=0, sticky="w",
+                                      padx=2, pady=1)
+            e = calc_entry(f, w=15)
+            e.grid(row=ri, column=1, padx=2, pady=1)
+            setattr(self, key, e)
+
+    def _build_shrinkage(self, parent):
+        f = section(parent, "Linear Shrinkage", 3, 3, colspan=3)
+        labels = ["Trough No.:", "Initial Length (A) mm:",
+                  "Oven Dry Length (B) mm:", "Linear Shrinkage % = 100(1-B/A):"]
+        for i, lt in enumerate(labels):
+            tk.Label(f, text=lt, bg="#f0f0f0", font=(FONT, 12)).grid(
+                row=i, column=0, sticky="w", padx=2, pady=1)
+        self.ls_trough = entry(f, w=12); self.ls_trough.grid(row=0, column=1)
+        self.ls_initial = entry(f, w=12); self.ls_initial.grid(row=1, column=1)
+        self.ls_final = entry(f, w=12); self.ls_final.grid(row=2, column=1)
+        self.ls_result = calc_entry(f, w=12); self.ls_result.grid(row=3, column=1)
+
+    def _build_buttons(self, parent):
+        bf = tk.Frame(parent, bg="#f0f0f0")
+        bf.grid(row=4, column=0, columnspan=6, sticky="w", padx=4, pady=4)
+        ttk.Button(bf, text="Calculate All", command=self._calculate,
+                   style="Primary.TButton").pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="Plot Cone Chart",
+                   command=self._plot).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="Save",
+                   command=self._save_soil).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="💾 Save to Log",
+                   command=self._save_log,
+                   style="Success.TButton").pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="Clear", command=self._clear).pack(side=tk.LEFT, padx=2)
+
+    def _build_log(self, parent):
+        f = tk.Frame(parent, bg="#f0f0f0")
+        _, self.log_tree = self.make_stored_panel(f)
+        self.add_delete_bar(f, self.log_tree)
+        f.grid(row=5, column=0, columnspan=6, sticky="ew", padx=4, pady=2)
+
+    def _calculate(self):
+        for ci in range(10):
+            ww = get_float(self.cells[("wt_wet", ci)])
+            wd = get_float(self.cells[("wt_dry", ci)])
+            wt = get_float(self.cells[("wt_tin", ci)])
+            if None in (ww, wd, wt):
+                continue
+            mc = calc.moisture_content(ww, wd, wt)
+            if mc is None:
+                continue
+            set_val(self.cells[("wt_moist", ci)], round(ww - wd, 2))
+            set_val(self.cells[("wt_drysoil", ci)], round(wd - wt, 2))
+            set_val(self.cells[("mc", ci)], f"{mc:.1f}")
+        cones, mcs = [], []
+        for pair in range(4):
+            v1 = get_float(self.cells[("mc", pair * 2)])
+            v2 = get_float(self.cells[("mc", pair * 2 + 1)])
+            vals = [v for v in (v1, v2) if v is not None]
+            if not vals:
+                continue
+            avg = sum(vals) / len(vals)
+            set_val(self.cells[("avg", pair * 2)], f"{avg:.1f}")
+            cp = get_float(self.cells[("cone", pair * 2)])
+            if cp is None:
+                continue
+            cones.append(cp)
+            mcs.append(avg)
+        ll, coeffs = calc.liquid_limit_from_cone(cones, mcs)
+        if ll is not None:
+            set_val(self.sum_ll, f"{ll:.1f}")
+        self._cones, self._mcs, self._coeffs, self._ll = cones, mcs, coeffs, ll
+
+        pl_vals = [v for v in (get_float(self.cells[("mc", 8)]),
+                               get_float(self.cells[("mc", 9)]))
+                   if v is not None]
+        pl = sum(pl_vals) / len(pl_vals) if pl_vals else None
+        if pl is not None:
+            set_val(self.cells[("avg", 8)], f"{pl:.1f}")
+            set_val(self.sum_pl, f"{pl:.1f}")
+        pi = calc.plasticity_index(ll, pl)
+        if pi is not None:
+            set_val(self.sum_pi, f"{pi:.1f}")
+        A = get_float(self.ls_initial)
+        B = get_float(self.ls_final)
+        if A and B:
+            ls = calc.linear_shrinkage(A, B)
+            if ls is not None:
+                set_val(self.ls_result, f"{ls:.1f}")
+                set_val(self.sum_ls, f"{ls:.1f}")
+
+    def _plot(self):
+        cones = getattr(self, "_cones", [])
+        mcs = getattr(self, "_mcs", [])
+        if not cones:
+            self._calculate()
+            cones = getattr(self, "_cones", [])
+            mcs = getattr(self, "_mcs", [])
+        if not cones:
+            messagebox.showwarning("Warning", "Need at least 1 data point.")
+            return
+        for w in self.chart.winfo_children():
+            w.destroy()
+        fig, ax = plt.subplots(figsize=(7, 6), dpi=100)
+        fig.patch.set_facecolor("white")
+        ll = getattr(self, "_ll", mcs[0] if mcs else 0)
+        if len(cones) >= 2:
+            coeffs = getattr(self, "_coeffs", None)
+            if coeffs is None:
+                c_arr, m_arr = zip(*zip(cones, mcs))
+                coeffs = np.polyfit(c_arr, m_arr, 1)
+            c_range = np.linspace(min(cones) - 2, max(cones) + 2, 200)
+            ax.plot(np.polyval(coeffs, c_range), c_range,
+                    "b-", linewidth=1)
+        ax.plot(mcs, cones, "bs", markersize=7, zorder=5)
+        ax.axhline(20, color="gray", linestyle="--", linewidth=0.8)
+        ax.axvline(ll, color="gray", linestyle="--", linewidth=0.8)
+        ax.set_xlabel("MOISTURE CONTENT (%)")
+        ax.set_ylabel("CONE PENETRATION (mm)")
+        ax.set_title(f"Liquid Limit = {ll:.1f}%",
+                     fontsize=10, fontweight="bold")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        c = FigureCanvasTkAgg(fig, self.chart)
+        c.draw()
+        c.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        plt.close(fig)
+
+    def _save_soil(self):
+        ll = get_float(self.sum_ll)
+        pl = get_float(self.sum_pl)
+        if ll is None or pl is None:
+            return messagebox.showwarning("Warning", "Calculate first!")
+        pi = ll - pl
+        self.db.execute(
+            """INSERT INTO soil_tests (test_name, sample_id, date,
+               moisture_content, liquid_limit, plastic_limit, plasticity_index,
+               soil_classification, technician, notes)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            ("Atterberg Limits", self.info["att_sampleno"].get(),
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 0, ll, pl, pi,
+             f"PI={pi:.1f}", self.info["att_tech"].get(), ""))
+        self.db.commit()
+
+    def _save_log(self):
+        ll = get_float(self.sum_ll)
+        pl = get_float(self.sum_pl)
+        ls = get_float(self.ls_result)
+        sno = self.info["att_sampleno"].get()
+        data = {"ll": f"{ll:.1f}" if ll else "",
+                "pl": f"{pl:.1f}" if pl else "",
+                "pi": f"{ll-pl:.1f}" if (ll and pl) else "",
+                "ls": f"{ls:.1f}" if ls else "",
+                "sample": sno, "technician": self.info["att_tech"].get()}
+        ts = self.save_to_log(sno or "Atterberg", data)
+        self.reload_log(self.log_tree)
+        self.log_tree._refresh_count()
+        messagebox.showinfo("Saved", f"Stored at {ts}")
+
+    def _clear(self):
+        for (key, ci), e in self.cells.items():
+            try:
+                e.config(state="normal")
+                e.delete(0, tk.END)
+                if key == "cone" and ci == 8:
+                    e.config(state="disabled", bg="#d8d8d8")
+                elif e.cget("bg") == C.CALC:
+                    e.config(state="readonly")
+            except Exception:
+                pass
+        for attr in ("sum_ll", "sum_pl", "sum_pi", "sum_ls", "ls_result"):
+            e = getattr(self, attr)
+            e.config(state="normal"); e.delete(0, tk.END); e.config(state="readonly")
+        for k, e in self.info.items():
+            if k != "att_date":
+                e.delete(0, tk.END)
+        for w in (self.ls_trough, self.ls_initial, self.ls_final):
+            w.delete(0, tk.END)
+        for w in self.chart.winfo_children():
+            w.destroy()
+
+
+# -----------------------------------------------------------------
+# The remaining 5 soil tabs (Compaction, PSD, CBR, Field Density,
+# Stabilization) follow the exact same pattern:
+#
+#   1. tab_label / log_category / log_columns as class attrs
+#   2. build() → _build_xxx() helpers
+#   3. math → imported from celtis.core.soil
+#   4. DB via self.db / self.log_store
+#   5. Shared state (Proctor MDD/OMC) → self.app.session["proctor_mdd"]
+# -----------------------------------------------------------------
